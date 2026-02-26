@@ -183,7 +183,7 @@ b2kib() { echo "scale=2; $1 / 1024" | bc -l; }
 #
 make_stage_2() {
     # Compress your sshrc configuration
-    files=$(tar c -hC "$(dirname "$1")" "$(basename "$1")" | base64)
+    files=$(tar c -hC "$(dirname "$1")" "$(basename "$1")" | openssl enc -base64)
 
     # Load login shell profile {{{3
     #
@@ -340,7 +340,7 @@ make_stage_2() {
 
         # Extract the sshrc configuration to the remote directory
         #
-        echo "%s" | base64 -d | tar -xC "$SSHRC" --strip-components 1
+        echo "%s" | openssl enc -base64 -d | tar -xC "$SSHRC" --strip-components 1
 
         # Create a bash wrapper to load sshrc configuration
         #
@@ -369,7 +369,7 @@ make_stage_2() {
         ' "$tmux_framework" "$login" "$tmux_aliases" "$files" "$tmux_copy" |
             # Any compression and encoding done here must
             # be reversed **inside** the stage_1 script
-            minify | gzip | base64
+            minify | gzip | openssl enc -base64
 }
 
 # make_stage_1 {{{2
@@ -378,13 +378,13 @@ make_stage_2() {
 #
 make_stage_1() {
     printf '
-        if ! command -v base64 >/dev/null; then
-            echo "Remote base64 not found!" >&2
+        if ! command -v openssl >/dev/null; then
+            echo "Remote openssl not found!" >&2
             exit 1
         fi
 
         # Reverse encoding and compression and run stage_2
-        eval "$(echo "%s" | base64 -d | gunzip)"
+        eval "$(echo "%s" | openssl enc -base64 -d | gunzip)"
         ' "$1" | minify
 }
 
