@@ -227,7 +227,7 @@ make_stage_2() {
                 # Try to load an sshrc tmux.conf. Fallback to the default config
                 if-shell "[ -f '\''\$SSHRC/tmux.conf'\'' ]" \
                     { source-file "\$SSHRC/tmux.conf" } \
-                    { source-file ~/.tmux.conf }
+                    { if-shell "[ -f ~/.tmux.conf ]" "source-file ~/.tmux.conf" }
 
                 # Use the bash wrapper so the sshrc configuration is loaded
                 # Set this after loading the user configuration in case the user
