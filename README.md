@@ -1,109 +1,150 @@
-**sshrc was originally written by Russell Stewart (Russell91), who left GitHub,
-and hasn't responded to requests to appoint a new maintainer. This is a
-maintained continuation of his work.**
+# sshrc
+
+`sshrc` works just like ssh, but also copies the contents of your local
+`$SSHRC_HOME` directory to the remote server and sources the remote copy of
+`$SSHRC_HOME/sshrc` in lieu of a remote `~/.bashrc file`. `$SSHRC_HOME` defaults
+to `$XDG_CONFIG_HOME/sshrc`.
 
 ## Usage
 
-sshrc works just like ssh, but it also sources the ~/.sshrc on your local computer after logging in remotely.
-
-    $ echo "echo welcome" >> ~/.sshrc
-    $ sshrc me@myserver
+    local$ echo "echo welcome" > ~.config/sshrc/sshrc
+    local$ sshrc server
     welcome
+    server$
 
-    $ echo "alias ..='cd ..'" >> ~/.sshrc
-    $ sshrc me@myserver
-    $ type ..
+    local$ echo "alias ..='cd ..'" > ~/.config/sshrc/sshrc
+    local$ sshrc server
+    server$ type ..
     .. is aliased to `cd ..'
 
-You can use this to set environment variables, define functions, and run post-login commands. It's that simple, and it won't impact other users on the server - even if they use sshrc too. This makes sshrc very useful if you share a server with multiple users and can't edit the server's ~/.bashrc without affecting them, or if you have several servers that you don't want to configure independently.
+You can use this to set environment variables, define functions, and run
+post-login commands, allowing you to use the same configuration on multiple
+remote servers without needing to configure them individually.
 
-## Installation
+`sshrc` creates a unique remote copy of your local `sshrc` configuration for
+each login.  This makes `sshrc` useful if you share a remote account with
+multiple users as each user can login to the same remote account and have a copy
+of their local `sshrc` configuration without conflict.
 
-#### OS X
+By default the initial shell spawned by `sshrc` does not source login shell
+files (`/etc/profile` and `~/.bash_profile`). Use the `-j` option to load these
+files.
 
-    $ brew install sshrc
-    
-#### Ubuntu (12.04 or 14.04+)
+## VIM
 
-    $ sudo add-apt-repository ppa:russell-s-stewart/ppa
-    $ sudo apt-get update
-    $ sudo apt-get install sshrc
-    
-#### Everything else
+Create a `$SSHRC_HOME/vimrc` file and add an alias to your `sshrc` file to have
+vim use this file as its configuration:
 
-    $ wget https://raw.githubusercontent.com/Russell91/sshrc/master/sshrc && 
-    chmod +x sshrc && 
-    sudo mv sshrc /usr/local/bin #or anywhere else on your PATH
+    # On the remote server $SSHRC contains the path to the remote copy of your
+    # sshrc configuration
+    local$ echo "alias vim='vim -u $SSHRC/vimrc'" >> ~/.config/sshrc/vimrc
+    local$ sshrc server
+    server$ type vim
+    vim is aliased to `vim -u $SSHRC/vimrc'
 
-## Advanced configuration
+## tmuxrc
 
-Your most import configuration files (e.g. vim, inputrc) may not be bash scripts. Put them in ~/.sshrc.d and sshrc will copy them to a (guaranteed) unique folder in the server's /tmp directory after login. You can find them at `$SSHHOME/.sshrc.d`. You can usually tell programs to load their configuration from the $SSHHOME/.sshrc.d directory by setting the right environment variables. Putting too much data in ~/.sshrc.d will slow down your login times. If the folder contents are > 64kB, the server may block your sshrc attempts.
+Normally, using tmux in an `sshrc` session uses the remote `~/.tmux.conf` and
+spawns shells that read your remote shell files. `sshrc` can optionally create a
+tmuxrc framework that reads `$SSHRC_HOME/tmux.conf` if found and spawns shells
+that read your `sshrc` file.
 
-### Vim
+Simply use the `-u` option when starting `sshrc` and run tmux normally. If you
+do not have a `$SSHRC_HOME/tmux.conf` file the local `~/.tmux.conf` will be read
+instead.
 
-    $ mkdir -p ~/.sshrc.d
-    $ echo ':imap <special> jk <Esc>' >> ~/.sshrc.d/.vimrc
-    $ cat << 'EOF' >> ~/.sshrc
-    export VIMINIT="let \$MYVIMRC='$SSHHOME/.sshrc.d/.vimrc' | source \$MYVIMRC"
-    EOF
-    $ sshrc me@myserver
-    $ vim # jk -> normal mode will work
+**NOTE:** Do not set the tmux `default-command` option as this is set by tmuxrc
+to spawn shells that read your `sshrc` file.
 
-If you want to load your .vim folder as well, you can 1) put the .vim folder in ~/.sshrc.d, 2) move your .vimrc into the .vim folder, 3) edit the path above to reflect the new .vimrc location, and 4) add the following lines at the top of the moved .vimrc, which will notify vim of the .vim folder location:
+tmuxrc sessions will persist across multiple invocations of `sshrc`.
 
-    " set default 'runtimepath' (without ~/.vim folders)
-    let &runtimepath = printf('%s/vimfiles,%s,%s/vimfiles/after', $VIM, $VIMRUNTIME, $VIM)
-    " what is the name of the directory containing this file?
-    let s:portable = expand('<sfile>:p:h')
-    " add the directory to 'runtimepath'
-    let &runtimepath = printf('%s,%s,%s/after', s:portable, &runtimepath, s:portable)
+On initial login, `sshrc` will copy your `sshrc` files to a persistent tmuxrc
+directory so that any detached tmux sessions can persist after the `sshrc`
+session exits while still having access to your `sshrc` setup. These files are
+not overwritten by a subsequent `sshrc` session unless there are no running
+tmuxrc sessions.
 
-### Tmux
+### Multi-user & Multi-location tmuxrc
 
-If you use tmux frequently, you can make sshrc work there as well. The following seems complicated, but hopefully it should just work.
+When `sshrc` creates a tmuxrc framework it uses a unique ID that is generated
+and stored on the local machine. Any `sshrc` sessions using the `-u` option will
+use this ID in order to connect to the same tmuxrc session.
 
-    $ cat << 'EOF' >> ~/.sshrc
-    alias foo='echo I work with tmux, too'
-    
-    tmuxrc() {
-        local TMUXDIR=/tmp/russelltmuxserver
-        if ! [ -d $TMUXDIR ]; then
-            rm -rf $TMUXDIR
-            mkdir -p $TMUXDIR
-        fi
-        rm -rf $TMUXDIR/.sshrc.d
-        cp -r $SSHHOME/.sshrc $SSHHOME/bashsshrc $SSHHOME/sshrc $SSHHOME/.sshrc.d $TMUXDIR
-        SSHHOME=$TMUXDIR SHELL=$TMUXDIR/bashsshrc /usr/bin/tmux -S $TMUXDIR/tmuxserver $@
-    }
-    export SHELL=`which bash`
-    EOF
-    $ sshrc me@myserver
-    $ tmuxrc
-    $ foo
-    I work with tmux, too
+If you want to connect to your own tmuxrc session from a different machine, use
+the `-U [ID]` option where ID is the unique ID from the local system that
+created the tmuxrc session. Use the `-d` option to display the local unique ID
+before moving to the second local system.
 
-The -S option will start a separate tmux server. You can still safely access the vanilla tmux server with `tmux`. Tmux servers can persist for longer than your ssh session, so the above `tmuxrc` function copies your configs to the more permenant /tmp/russelltmuxserver, which won't be deleted when you close your ssh session. Starting tmux with the SHELL environment variable set to bashsshrc will take care of loading your configs with each new terminal. Setting SHELL back to /bin/bash when you're done is important to prevent quirks due to tmux sessions having a non-default SHELL variable.
+    # From one system:
+    box-1$ sshrc -u server
+    server$ tmux
+    # detach the session
+    server$ sshrc -d
+    ABCDEF
 
-### Specializing .sshrc to individual servers
+    # From another system:
+    box-2$ sshrc -U ABCDEF server
+    server$ tmux attach
+    # you are attached to the previously detached session
 
-You may have different configurations for different servers. I recommend the following structure for your ~/.sshrc control flow:
+If multiple users use `sshrc` to log into the same remote account and want to
+share a tmuxrc session the `-U` option can be used but when any user ends their
+`sshrc` session while there are no existing tmux sessions, the tmuxrc framework
+will be deleted automatically.
 
-    if [ $(hostname | grep server1 | wc -l) == 1 ]; then
-        echo 'server1'
-    fi
-    if [ $(hostname | grep server2 | wc -l) == 1 ]; then
-        echo 'server2'
-    fi
+Instead, one user should start tmuxrc normally and pass their unique ID to the
+other users. This can be obtained before starting the `sshrc` session with the
+`-d` option or with the remote `tmux_id` command:
 
-### Tips
+    bob@local$ sshrc -d
+    ABCDEF
+    bob@local$ sshrc -u server
+    bob@server$ tmux_id
+    ABCDEF
+    bob@server$ tmux
+    # inside a tmux session to share
 
-* I don't recommend trying to throw your entire .vim folder into ~/.sshrc.d. It will more than likely be too big.
+Other users can then connect using `sshrc` **without** the `-u` option and use
+the remote `tmuxrc` command to connect:
 
-* You can avoid duplication of dotfiles using symlinks (e.g. $ cd ~/.sshrc.d && ln -s ../.tmux.conf .tmux.conf/ ).
+    alice@local$ sshrc server
+    alice@server$ tmuxrc ABCDEF [tmux options and commands]
+    # inside the shared tmux session
 
-* For larger configurations, consider copying files to an obscure folder on the server and using ~/.sshrc to automatically source those configurations on login.
+# Advanced Details
 
-* To enable tab completion in zsh, add `compdef sshrc=ssh` to your .zshrc file:
+When an `sshrc` session begins, a unique directory is created in `/tmp` and the
+variable `$SSHRC` is set to the path to that directory. The contents of your
+local `$SSHRC` are then copied to the remote `$SSHRC` directory.
 
+Inside a tmuxrc session, `$SSHRC` is set to the path to the persistent tmuxrc
+directory.
 
-[sshrc-git]: https://aur.archlinux.org/packages/sshrc-git
+You will need to configure necessary environment variables or aliases for
+programs other than bash or tmux to use files copied to `$SSHRC` (see the Vim
+example above).
+
+Putting too much data in `$SSHRC_HOME` will slow down your login times and if
+the contents of `$SSHRC_HOME` are too large, the remote server may deny your
+login attempts. Although the maximum allowable command length on modern systems
+is generally 
+
+Because the length of a command line is limited, `sshrc` refuses to attempt to
+login if it attempts to upload > 1024 KiB.  This maximum size can be changed
+with the `-Z` option.
+
+Use the -z option to determine the total size of data that `sshrc` will attempt to
+upload.  This includes the size of the `sshrc` bootstrap script which, along with
+your `$SSHRC_HOME` directory is compressed using gzip(1).
+
+## Message of the Day
+
+By default `sshrc` will attempt to print the remote message of the day and print
+the last login time. This can be suppressed by creating a remote `~/.hushlogin`
+file (per `login(1)`) or be creating a `$SSHRC_HOME/.hushlogin` file.
+
+## Tab Completion
+
+To enable tab completion in bash, add `complete -F _comp_cmd_ssh sshrc` to your
+`.bashrc` file.
+

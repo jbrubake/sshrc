@@ -1,97 +1,415 @@
-#!/usr/bin/env bash
-function sshrc() {
-    local SSHHOME=${SSHHOME:=~}
-    if [ -f $SSHHOME/.sshrc ]; then
-        local files=.sshrc
-        if [ -d $SSHHOME/.sshrc.d ]; then
-            files="$files .sshrc.d"
-        fi
-        SIZE=$(tar cfz - -h -C $SSHHOME $files | wc -c)
-        if [ $SIZE -gt 65536 ]; then
-            echo >&2 $'.sshrc.d and .sshrc files must be less than 64kb\ncurrent size: '$SIZE' bytes'
+#!/bin/sh
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+#
+# Copyright 2026 Jeremy Brubaker <jbru362@gmail.com>
+#
+# Original License (version 1):
+# > The MIT License (MIT)
+#
+# > Copyright (c) 2014 Russell Stewart
+#
+# > Permission is hereby granted, free of charge, to any person obtaining
+# > a copy of this software and associated documentation files (the
+# > "Software"), to deal in the Software without restriction, including
+# > without limitation the rights to use, copy, modify, merge, publish,
+# > distribute, sublicense, and/or sell copies of the Software, and to
+# > permit persons to whom the Software is furnished to do so, subject to
+# > the following conditions:
+#
+# > The above copyright notice and this permission notice shall be included
+# > in all copies or substantial portions of the Software.
+#
+# > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# > EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# > MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# > IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+# > CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+# > TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# > SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# abstract: Bring your .bashrc, .vimrc, etc. with you when you ssh 
+#
+# A heavily modified version of Russell Stewart's original
+# (https://github.com/cdown/sshrc) with additional ideas taken from
+# taylorskalyo's fork (https://github.com/taylorskalyo/sshrc)
+#
+# shellcheck disable=SC2016 (Expressions don't expand in single quotes)
+#
+# Defaults {{{1
+#
+# Path to your sshrc configuration
+SSHRC_HOME=${SSHRC_HOME:=${XDG_CONFIG_HOME:-"$HOME/.config"}/sshrc}
+ARG_MAX=1024     # Maximum allowable ssh command argument size in KiB
+DO_LOGIN=false;  # Process remote login shell files
+DO_TMUX=false;   # Include tmuxrc framework
+
+# Documentation {{{1
+#
+VERSION=2.0
+
+print_version() { # {{{2
+    cat <<END
+$(basename "$0") $VERSION
+Copyright (C) 2026 Orion Arts
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Jeremy Brubaker.
+END
+} >&2
+
+print_help() { # {{{2
+    cat <<END
+Usage: $(basename "$0") [OPTION] [SSH OPTION] ssh_args ...
+
+Bring your .bashrc, .vimrc, etc. with you when you ssh 
+
+  -j         sshrc will process local login shell files
+  -u         setup tmuxrc using the unique system identifier
+  -U [ID]    setup tmuxrc using ID as the unique identifier
+  -d         display the unique system identifier used by tmuxrc
+  -Z [SIZE]  set maximum the ssh command argument size in KiB
+               (Default: $ARG_MAX KiB)
+  -z         print size of the ssh command argument and exit
+  -h         display this help
+END
+} >&2
+
+# Process options {{{1
+#
+# Location of the unique tmuxrc ID
+# This file should not be deleted or edited
+tmuxrc_id_file=${XDG_STATE_HOME:-~/.local/state}/sshrc-tmuxrc-id
+
+# Get (setting if necessary) the tmuxrc ID
+[ -r "$tmuxrc_id_file" ] || mktemp -u XXXXXX > "$tmuxrc_id_file"
+TMUX_ID=$(cat "$tmuxrc_id_file")
+
+# Print ssh argument size and exit if true
+CHECK_SIZE=false
+
+# All options not used by ssh are accepted so I don't have to keep searching
+# through the manpage
+while getopts ':dHjruU:zZ:hV' opt; do
+    case $opt in
+        d) cat "$tmuxrc_id_file"; exit ;;
+        H) ;; # place holder for exapansion
+        j) DO_LOGIN=true ;;
+        r) ;; # place holder for exapansion
+        u) DO_TMUX=true ;;
+        U) DO_TMUX=true; TMUX_ID=${OPTARG:-$TMUX_ID} ;;
+        z) CHECK_SIZE=true ;;
+        Z) ARG_MAX=$OPTARG ;;
+        h) print_help; exit ;;
+        V) print_version; exit ;;
+        :) # Print an error for missing arguments
+            printf -- '-%s requires an argument\n' "$OPTARG" >&2
+            print_help
             exit 1
-        fi
-        if [ -z "$CMDARG" -a ! -e ~/.sshrc.d/.hushlogin ]; then
-            WELCOME_MSG="
-                if [ ! -e ~/.hushlogin ]; then
-                    if [ -e /etc/motd ]; then cat /etc/motd; fi
-                    if [ -e /etc/update-motd.d ]; then run-parts /etc/update-motd.d/ 2>/dev/null; fi
-                    last -F \$USER 2>/dev/null | grep -v 'still logged in' | head -n1 | awk '{print \"Last login:\",\$4,\$5,\$6,\$7,\$8,\"from\",\$3;}'
-                fi
-                "
-        else
-            WELCOME_MSG=""
-        fi
-        ssh -t "$DOMAIN" $SSHARGS "
-            command -v openssl >/dev/null 2>&1 || { echo >&2 \"sshrc requires openssl to be installed on the server, but it's not. Aborting.\"; exit 1; }
-            $WELCOME_MSG
-            export SSHHOME=\$(mktemp -d -t .$(whoami).sshrc.XXXX)
-            export SSHRCCLEANUP=\$SSHHOME
-            trap \"rm -rf \$SSHRCCLEANUP; exit\" 0
-            echo $'"$(cat "$0" | openssl enc -base64)"' | tr -s ' ' $'\n' | openssl enc -base64 -d > \$SSHHOME/sshrc
-            chmod +x \$SSHHOME/sshrc
+            ;;
+        *) printf 'Invalid option: %s\n' "$opt" >&2
+            print_help
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+OPTIND=1
 
-            echo $'"$( cat << 'EOF' | openssl enc -base64
-                if [ -r /etc/profile ]; then source /etc/profile; fi
-                if [ -r ~/.bash_profile ]; then source ~/.bash_profile
-                elif [ -r ~/.bash_login ]; then source ~/.bash_login
-                elif [ -r ~/.profile ]; then source ~/.profile
-                fi
-                export PATH=$PATH:$SSHHOME
-                source $SSHHOME/.sshrc;
-EOF
-                )"' | tr -s ' ' $'\n' | openssl enc -base64 -d > \$SSHHOME/sshrc.bashrc
+# Functions {{{1
+#
+# minify {{{2
+#
+# Minify the input by
+#
+# - stripping leading whitespace
+# - printing anything that looks like a shebang (which can be found anywhere)
+# - deleting full line comments
+# - deleting blank lines
+#
+minify() {
+    sed -e 's/^[[:space:]]*//g' \
+        -e '/^#!/p' \
+        -e '/^#/d' \
+        -e '/^$/d'
+}
 
-            echo $'"$( cat << 'EOF' | openssl enc -base64
-#!/usr/bin/env bash
-                exec bash --rcfile <(echo '
-                [ -r /etc/profile ] && source /etc/profile
-                if [ -r ~/.bash_profile ]; then source ~/.bash_profile
-                elif [ -r ~/.bash_login ]; then source ~/.bash_login
-                elif [ -r ~/.profile ]; then source ~/.profile
-                fi
-                source '$SSHHOME'/.sshrc;
-                export PATH=$PATH:'$SSHHOME'
-                ') "$@"
-EOF
-                )"' | tr -s ' ' $'\n' | openssl enc -base64 -d > \$SSHHOME/bashsshrc
-            chmod +x \$SSHHOME/bashsshrc
+# ssh argument command size functions {{{2
+#
+# Check to see if a string is larger than $ARG_MAX KiB
+#
+# Arguments:
+#   $1: string to check
+#
+# stdout:
+#   0: size is ok
+#   N: size is too large, N == size in B
+#
+check_cmd_size() {
+    size=$(get_byte_size "$1")
 
-            echo $'"$(tar czf - -h -C $SSHHOME $files | openssl enc -base64)"' | tr -s ' ' $'\n' | openssl enc -base64 -d | tar mxzf - -C \$SSHHOME
-            export SSHHOME=\$SSHHOME
-            echo \"$CMDARG\" >> \$SSHHOME/sshrc.bashrc
-            bash --rcfile \$SSHHOME/sshrc.bashrc
-            "
+    if [ "$size" -le "$((ARG_MAX * 1024))" ]; then
+        echo 0
     else
-        echo "No such file: $SSHHOME/.sshrc" >&2
-        exit 1
+        echo "$size"
     fi
 }
 
-function sshrc_parse() {
-  while [[ -n $1 ]]; do
-    case $1 in
-      -b | -c | -D | -E | -e | -F | -I | -i | -J | -L | -l | -m | -O | -o | -p | -Q | -R | -S | -W | -w )
-        SSHARGS="$SSHARGS $1 $2"; shift ;;
-      -* )
-        SSHARGS="$SSHARGS $1" ;;
-      *)
-        if [ -z "$DOMAIN" ]; then
-         DOMAIN="$1"
-        else
-          local SEMICOLON=$([[ "$@" = *[![:space:]]* ]] && echo '; ')
-          CMDARG="$@$SEMICOLON exit"
-          return;
-        fi
-        ;;
-    esac
-    shift
-  done
-  if [ -z $DOMAIN ]; then
-    ssh $SSHARGS; exit 1;
-  fi
+# Print size of $1 in B
+#
+get_byte_size() { LC_ALL=C printf %s "$1" | wc -c; }
+
+# Convert B to KiB
+#
+b2kib() { echo "scale=2; $1 / 1024" | bc -l; }
+
+# make_stage_2 {{{2
+#
+# Print a compressed script that will setup the remote environment
+# and then run a new shell with that environment
+#
+make_stage_2() {
+    # Compress your sshrc configuration
+    files=$(tar c -hC "$(dirname "$1")" "$(basename "$1")" | base64)
+
+    # Load login shell profile {{{3
+    #
+    unset login
+    if "$DO_LOGIN"; then
+        login='
+            [ -r /etc/profile ] && . /etc/profile
+
+            for f in .bash_{profile,login} .profile; do
+                [ -r ~/\$f ] && . ~/\$f && break
+            done
+            '
+    fi
+
+    # Setup tmuxrc {{{3
+    #
+    unset tmux_framework tmux_aliases tmux_copy
+    if "$DO_TMUX"; then
+        # Setup tmuxrc framework during initial login
+        #
+        tmux_framework='
+            # Directory tree for tmuxrc socket and sshrc configuration to
+            # persist through a tmux session. TMUX_TMPDIR is ignored for
+            # simplicity
+            tmux_id='$TMUX_ID'
+            tmuxbase=$tmux_tmp-$tmux_id
+            tmuxrc=$tmuxbase/sshrc
+
+            # Name of the tmux socket
+            tmuxsock=tmuxrc
+
+            # Create with proper permissions if necessary
+            mask=$(umask)
+            umask 0077
+            mkdir -p "$tmuxrc"
+            umask "$mask"
+
+            # Create a stub tmuxrc configuration
+            #
+            cat > "$tmuxrc/../tmuxrc.conf" <<END
+                # Try to load an sshrc tmux.conf. Fallback to the default config
+                if-shell "[ -f '\''\$SSHRC/tmux.conf'\'' ]" \
+                    { source-file "\$SSHRC/tmux.conf" } \
+                    { source-file ~/.tmux.conf }
+
+                # Use the bash wrapper so the sshrc configuration is loaded
+                # Set this after loading the user configuration in case the user
+                # missed the warning to **not** set this option
+                set-option -g default-command "\$SSHRC/../bash"
+            END'
+
+        # - Alias tmux to use the tmuxrc framework
+        # - Create an alias to get the TMUX_ID for multi-user tmuxrc
+        #
+        tmux_aliases='
+            alias tmux="tmuxrc $tmux_id"
+            alias tmux_id="echo $tmux_id"
+            '
+
+        # If there are no existing tmux sessions, copy all sshrc files to a
+        # persistent tmuxrc directory just before spawning the initial sshrc
+        # shell
+        tmux_copy='command tmux -S "$tmuxbase/$tmuxsock" ls >/dev/null 2>&1 || cp -r "$base"/. "$tmuxrc/.."'
+    fi
+
+    # Create the stage_2 script {{{3
+    #
+                        # awk '\''{print "Last login:",\$4,\$5,\$6,\$7,\$8,\"from\",\$3;}'\''
+    printf '
+        # Create a remote directory for your sshrc configuration
+        #
+        # base: where to put sshrc framework. Sometimes this is accessed as
+        #   $SSHRC/.. because SSHRC may change which would have required
+        #   exporting and overriding an additional variable.
+        # SSHRC: where to put your sshrc configuration
+        #
+        # SSHRC is the only exported path because tmuxrc needs to override it.
+        # All other paths end up hardcoded so they cannot be overriden
+        #
+        base="$(mktemp -d --tmpdir "sshrc-$(id -un).XXXXXXXXXX")"
+        export SSHRC=$base/sshrc
+        mkdir "$SSHRC"
+
+        # Setup tmuxrc framework
+        # $tmux_tmp is needed by the tmuxrc function below
+        #
+        tmux_tmp=/tmp/tmux-$(id -u)
+        # tmux_framework
+        %s
+
+        # Create a bash rcfile to load the sshrc framework (Any variables that
+        # should be interpolated when the file is *sourced* must be escaped)
+        #
+        cat > "$base/config" <<END
+            # Things that are only done in the initial shell
+            #
+            if [ -z "\$_SSHRC_LOGIN" ]; then
+                _sshrc_cleanup() {
+                    # Remove the sshrc framework on exit
+                    rm -rf "$base"
+
+                    # Remove the tmuxrc framework on exit if there are no
+                    # existing tmux sessions. $tmuxbase is null if the tmuxrc
+                    # framework is not installed
+                    if [ -n "$tmuxbase" ]; then
+                        command tmux -S "$tmuxbase/$tmuxsock" ls >/dev/null 2>&1 || rm -r "$tmuxbase"
+                    fi
+                }
+                trap _sshrc_cleanup EXIT
+
+                # Print motd unless hushed
+                # (This does not honor the sshd PrintMotd setting)
+                #
+                if ! [ -f ~/.hushlogin -o -f "\$SSHRC/.hushlogin" ]; then
+                    [ -r /etc/motd ] && cat /etc/motd
+                    [ -r /etc/update-motd.d ] run-parts /etc/update-motd.d 2>/dev/null
+                    command -v last 2>/dev/null &&
+                        last -F $(id -un) 2>/dev/null |
+                            grep -v "still logged in" | head -n1 |
+                            awk '\''{print "Last login:",\$4,\$5,\$6,\$7,\$8,\"from\",\$3;}'\''
+                fi
+
+                # Load login shell profile
+                %s
+
+                # Suppress this block in future shells
+                export _SSHRC_LOGIN=1
+            fi
+
+            # Load your sshrc configuration
+            [ -r "\$SSHRC/sshrc" ] && . "\$SSHRC/sshrc"
+
+            # Create tmux wrapper
+            %s
+
+            # If DO_TMUX is true, tmuxrc is called by the tmux alias. If DO_TMUX
+            # is false, tmuxrc is used interactively to connect to an existing
+            # tmuxrc server. The first argument is the unique ID of the tmuxrc
+            # server you want to use
+            #
+            tmuxrc() {
+                # Set tmuxrc directory based on ID
+                tmuxbase="$tmux_tmp-\$1"; shift
+
+                # - Set SSHRC to the persistent $tmuxrc
+                # - Use a custom socket
+                # - Load the tmuxrc config (which will load your actual config)
+                SSHRC=\$tmuxbase/sshrc command tmux -S "\$tmuxbase/tmuxrc" -f "\$tmuxbase/tmuxrc.conf" "\$@"
+            }
+
+            # Interactive calls to bash load your sshrc configuration
+            alias bash="\$SSHRC/../bash"
+        END
+
+        # Extract the sshrc configuration to the remote directory
+        #
+        echo "%s" | base64 -d | tar -xC "$SSHRC" --strip-components 1
+
+        # Create a bash wrapper to load sshrc configuration
+        #
+        cat > "$base/bash" <<END
+            exec /bin/bash --rcfile \"\$SSHRC/../config\" \"\$@\"
+        END
+        chmod +x "$base/bash"
+
+        # Copy sshrc stuff so it is not deleted when the initial shell exits
+        #
+        %s
+
+        # Using exec sets SHLVL == 1 like a real login
+        # env -i clears anything that was done by the initial login profile
+        # The variables set are necessary for a functional shell
+        #
+        exec env -i \
+            HOME="$HOME" \
+            LOGNAME="$LOGNAME" \
+            SSHRC="$SSHRC" \
+            SSH_CLIENT="$SSH_CLIENT" \
+            SSH_CLIENT2="$SSH_CLIENT2" \
+            SSH_TTY="$SSH_TTY" \
+            TERM=xterm \
+            "$base/bash"
+        ' "$tmux_framework" "$login" "$tmux_aliases" "$files" "$tmux_copy" |
+            # Any compression and encoding done here must
+            # be reversed **inside** the stage_1 script
+            minify | gzip | base64
 }
 
-command -v openssl >/dev/null 2>&1 || { echo >&2 "sshrc requires openssl to be installed locally, but it's not. Aborting."; exit 1; }
-sshrc_parse "$@"
-sshrc
+# make_stage_1 {{{2
+#
+# Print a script that will bootstrap the compressed bash wrapper
+#
+make_stage_1() {
+    printf '
+        if ! command -v base64 >/dev/null; then
+            echo "Remote base64 not found!" >&2
+            exit 1
+        fi
+
+        # Reverse encoding and compression and run stage_2
+        eval "$(echo "%s" | base64 -d | gunzip)"
+        ' "$1" | minify
+}
+
+# Main {{{1
+#
+if ! [ -d "$SSHRC_HOME" ]; then
+    printf '$SSHRC_HOME does not exist: %s\n' "$SSHRC_HOME" >&2
+    exit 1
+fi
+
+stage_2=$(make_stage_2 "$SSHRC_HOME")
+stage_1=$(make_stage_1 "$stage_2")
+
+# Print stage_1 size if requested
+if [ "$CHECK_SIZE" = true ]; then
+    printf 'sshrc stage_1 command is %s KiB\n' "$(b2kib "$(get_byte_size "$stage_1")")"
+else
+    size=$(check_cmd_size "$stage_1")
+
+    # Abort if stage_1 size is too big
+    if [ "$size" != 0 ]; then
+        printf 'Error: stage_1 command size (%s KiB) is greater than %s KiB\n' "$(b2kib "$size")" "$ARG_MAX"
+        exit 1
+    else
+        exec ssh -t "$@" "$stage_1"
+    fi
+fi
+
