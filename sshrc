@@ -39,7 +39,7 @@
 # > TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # > SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
-# abstract: Bring your .bashrc, .vimrc, etc. with you when you ssh 
+# abstract: Bring your dotfiles with you when you ssh 
 #
 # A heavily modified version of Russell Stewart's original
 # (https://github.com/cdown/sshrc) with additional ideas taken from
@@ -192,7 +192,8 @@ make_stage_2() {
         login='
             [ -r /etc/profile ] && . /etc/profile
 
-            for f in .bash_{profile,login} .profile; do
+            # $rc is set appropriate by stage_1
+            for f in $rc .profile; do
                 [ -r ~/\$f ] && . ~/\$f && break
             done
             '
@@ -229,10 +230,10 @@ make_stage_2() {
                     { source-file "\$SSHRC/tmux.conf" } \
                     { if-shell "[ -f ~/.tmux.conf ]" "source-file ~/.tmux.conf" }
 
-                # Use the bash wrapper so the sshrc configuration is loaded
-                # Set this after loading the user configuration in case the user
-                # missed the warning to **not** set this option
-                set-option -g default-command "\$SSHRC/../bash"
+                # Use the sshrc shell wrapper so the sshrc configuration is
+                # loaded Set this after loading the user configuration in case
+                # the user missed the warning to **not** set this option
+                set-option -g default-command "\$SSHRC/../sshrcsh"
             END'
 
         # - Alias tmux to use the tmuxrc framework
@@ -274,10 +275,24 @@ make_stage_2() {
         # tmux_framework
         %s
 
-        # Create a bash rcfile to load the sshrc framework (Any variables that
+        # If our shell is not bash then configure some things differently
+        if [ -z "$BASH" ]; then
+            export ENV=\$SSHRC/../config
+        else
+            ENV=
+            # bash-specific login shell files
+            rc=".bash_{profile,login}"
+        fi
+
+        # Create a shell rcfile to load the sshrc framework (Any variables that
         # should be interpolated when the file is *sourced* must be escaped)
         #
         cat > "$base/config" <<END
+            # Not already exported for some reason which prevents
+            # dircolors(1) from working
+            #
+            export SHELL
+
             # Things that are only done in the initial shell
             #
             if [ -z "\$_SSHRC_LOGIN" ]; then
@@ -334,20 +349,34 @@ make_stage_2() {
                 SSHRC=\$tmuxbase/sshrc command tmux -S "\$tmuxbase/tmuxrc" -f "\$tmuxbase/tmuxrc.conf" "\$@"
             }
 
-            # Interactive calls to bash load your sshrc configuration
-            alias bash="\$SSHRC/../bash"
+            # Interactive calls to bash (or sh depending on what is installed)
+            # run the sshrc shell wrapper
+            if command -v bash >/dev/null; then
+                alias_shell=bash
+            else
+                alias_shell=sh
+            fi
+            alias \$alias_shell="\$SSHRC/../sshrcsh"
         END
 
         # Extract the sshrc configuration to the remote directory
         #
         echo "%s" | openssl enc -base64 -d | tar -xC "$SSHRC" --strip-components 1
 
-        # Create a bash wrapper to load sshrc configuration
+        # Create a shell wrapper to load sshrc configuration
         #
-        cat > "$base/bash" <<END
-            exec /bin/bash --rcfile \"\$SSHRC/../config\" \"\$@\"
+        cat > "$base/sshrcsh" <<END
+            # Work with shells that are not bash
+            #
+            #!/bin/sh
+
+            if [ -n "$BASH" ]; then
+                exec /bin/bash --rcfile \"\$SSHRC/../config\" \"\$@\"
+            else
+                ENV=\"\$SSHRC/../config\" exec /bin/sh \"\$@\"
+            fi
         END
-        chmod +x "$base/bash"
+        chmod +x "$base/sshrcsh"
 
         # Copy sshrc stuff so it is not deleted when the initial shell exits
         #
@@ -365,7 +394,8 @@ make_stage_2() {
             SSH_CLIENT2="$SSH_CLIENT2" \
             SSH_TTY="$SSH_TTY" \
             TERM=xterm \
-            "$base/bash"
+            ${ENV:+ENV=\"\$SSHRC/../config\"} \
+            "$base/sshrcsh"
         ' "$tmux_framework" "$login" "$tmux_aliases" "$files" "$tmux_copy" |
             # Any compression and encoding done here must
             # be reversed **inside** the stage_1 script
