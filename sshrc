@@ -314,8 +314,8 @@ make_stage_2() {
                 # (This does not honor the sshd PrintMotd setting)
                 #
                 if ! [ -f ~/.hushlogin -o -f "\$SSHRC/.hushlogin" ]; then
-                    [ -r /etc/motd ] && cat /etc/motd
                     [ -r /etc/update-motd.d ] run-parts /etc/update-motd.d 2>/dev/null
+                    [ -r /etc/motd ] && cat /etc/motd
                     command -v last 2>/dev/null &&
                         last -F $(id -un) 2>/dev/null |
                             grep -v "still logged in" | head -n1 |
