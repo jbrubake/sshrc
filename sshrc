@@ -316,6 +316,10 @@ make_stage_2() {
                 if ! [ -f ~/.hushlogin -o -f "\$SSHRC/.hushlogin" ]; then
                     [ -r /etc/update-motd.d ] run-parts /etc/update-motd.d 2>/dev/null
                     [ -r /etc/motd ] && cat /etc/motd
+
+                    # BSD last(1) does not have a -F option but I am not
+                    # bothering to try to parse it. You just get no last login
+                    # message on BSD. Sorry
                     command -v last >/dev/null &&
                         last -F $(id -un) 2>/dev/null |
                             grep -v "still logged in" | head -1 |
