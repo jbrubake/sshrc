@@ -362,7 +362,7 @@ make_stage_2() {
 
         # Extract the sshrc configuration to the remote directory
         #
-        echo "%s" | openssl enc -base64 -d | tar -xC "$SSHRC" --strip-components 1
+        echo "%s" | openssl enc -base64 -d | tar xf - -C "$SSHRC" --strip-components 1
 
         # Create a shell wrapper to load sshrc configuration
         #
