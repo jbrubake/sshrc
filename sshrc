@@ -265,7 +265,7 @@ make_stage_2() {
         # SSHRC is the only exported path because tmuxrc needs to override it.
         # All other paths end up hardcoded so they cannot be overriden
         #
-        base="$(mktemp -d --tmpdir "sshrc-$(id -un).XXXXXXXXXX")"
+        base="$(mktemp -d -t "sshrc-$(id -un).XXXXXXXXXX")"
         export SSHRC=$base/sshrc
         mkdir "$SSHRC"
 
