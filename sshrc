@@ -103,12 +103,13 @@ CHECK_SIZE=false
 
 # All options not used by ssh are accepted so I don't have to keep searching
 # through the manpage
-while getopts ':dHjruU:zZ:hV' opt; do
+while getopts ':dHjrtuU:zZ:hV' opt; do
     case $opt in
         d) cat "$tmuxrc_id_file"; exit ;;
         H) ;; # place holder for exapansion
         j) DO_LOGIN=true ;;
         r) ;; # place holder for exapansion
+        t) ;; # place holder for exapansion
         u) DO_TMUX=true ;;
         U) DO_TMUX=true; TMUX_ID=${OPTARG:-$TMUX_ID} ;;
         z) CHECK_SIZE=true ;;
