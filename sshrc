@@ -372,7 +372,7 @@ make_stage_2() {
             #!/bin/sh
 
             if [ -n "$BASH" ]; then
-                exec /bin/bash --rcfile \"\$SSHRC/../config\" \"\$@\"
+                exec /usr/bin/env bash --rcfile \"\$SSHRC/../config\" \"\$@\"
             else
                 ENV=\"\$SSHRC/../config\" exec /bin/sh \"\$@\"
             fi
