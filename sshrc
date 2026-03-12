@@ -366,7 +366,8 @@ make_stage_2() {
 
         # Extract the sshrc configuration to the remote directory
         #
-        echo "%s" | openssl enc -base64 -d | tar xf - -C "$SSHRC" --strip-components 1
+        echo "%s" | $decode_cmd | tar xf - -C "$SSHRC" --strip-components 1
+        unset decode_cmd
 
         # Create a shell wrapper to load sshrc configuration
         #
@@ -413,13 +414,17 @@ make_stage_2() {
 #
 make_stage_1() {
     printf '
-        if ! command -v openssl >/dev/null; then
-            echo "Remote openssl not found!" >&2
+        if command -v openssl >/dev/null; then
+            export decode_cmd="openssl enc -base64 -d"
+        elif command -v base64 >/dev/null; then
+            export decode_cmd="base64 -d"
+        else
+            echo "Remote openssl or base64 not found!" >&2
             exit 1
         fi
 
         # Reverse encoding and compression and run stage_2
-        eval "$(echo "%s" | openssl enc -base64 -d | gunzip)"
+        eval "$(echo "%s" | $decode_cmd | gunzip)"
         ' "$1" | minify
 }
 
